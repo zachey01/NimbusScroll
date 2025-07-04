@@ -62,16 +62,6 @@ MIT License - see [LICENSE](https://github.com/zachey01/NimbusScroll/blob/main/L
 
 ---
 
-## 🤝 Contributing
-
-1. Fork the repo 🍴
-2. Create your feature branch (`git checkout -b feat/smooth-scroll`)
-3. Commit changes (`git commit -m "Add inertia control"`)
-4. Push to origin (`git push origin feat/smooth-scroll`)
-5. Open a PR 🚀
-
----
-
 ## 📬 Feedback & Issues
 
 Report bugs or suggest features via [GitHub Issues](https://github.com/zachey01/NimbusScroll/issues)
