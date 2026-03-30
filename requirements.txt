@@ -1,0 +1,10 @@
+easing-functions
+pillow
+psutil
+pypiwin32
+pyproject_hooks
+pystray
+pywin32
+sv-ttk
+nuitka
+winshell
