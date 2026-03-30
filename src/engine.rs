@@ -172,6 +172,12 @@ pub(crate) fn should_exit() -> bool {
     EXIT_REQUESTED.load(Ordering::Relaxed)
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct MouseDeviceInfo {
+    pub(crate) label: String,
+    pub(crate) path: String,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct ModifierState {
     pub(crate) win_down: bool,
@@ -180,112 +186,6 @@ pub(crate) struct ModifierState {
 impl ModifierState {
     pub const fn new() -> Self {
         Self { win_down: false }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct MomentumAxis {
-    pub(crate) velocity_hires: f64,
-    pub(crate) hires_accum: f64,
-    pub(crate) detent_accum: f64,
-}
-
-impl MomentumAxis {
-    pub const fn new() -> Self {
-        Self {
-            velocity_hires: 0.0,
-            hires_accum: 0.0,
-            detent_accum: 0.0,
-        }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.velocity_hires = 0.0;
-        self.hires_accum = 0.0;
-        self.detent_accum = 0.0;
-    }
-
-    pub(crate) fn push_detents(&mut self, input_detents: f64, gain: f64, max_velocity: f64) {
-        self.velocity_hires += input_detents * 120.0 * gain;
-        self.velocity_hires = self.velocity_hires.clamp(-max_velocity, max_velocity);
-    }
-
-    pub(crate) fn tick(&mut self, damping: f64, dt: Duration) {
-        let dt_ms = dt.as_secs_f64() * 1000.0;
-
-        // todo: fix hz
-        let base_dt = 1000.0 / 144.0; // ≈ 6.94 ms
-
-        let scale = (dt_ms / base_dt).clamp(0.25, 4.0);
-
-        self.hires_accum += self.velocity_hires * scale;
-
-        let effective_damping = damping.powf(scale);
-        self.velocity_hires *= effective_damping;
-
-        if self.velocity_hires.abs() < VELOCITY_EPSILON {
-            self.velocity_hires = 0.0;
-        }
-        if self.hires_accum.abs() < ACCUM_EPSILON {
-            self.hires_accum = 0.0;
-        }
-        if self.detent_accum.abs() < ACCUM_EPSILON {
-            self.detent_accum = 0.0;
-        }
-    }
-
-    pub(crate) fn drain(&mut self) -> (i32, i32) {
-        let hires = trunc_to_i32(self.hires_accum);
-        self.hires_accum -= hires as f64;
-
-        self.detent_accum += hires as f64 / 120.0;
-        let detents = trunc_to_i32(self.detent_accum);
-        self.detent_accum -= detents as f64;
-
-        (hires, detents)
-    }
-
-    pub(crate) fn is_idle(&self) -> bool {
-        self.velocity_hires == 0.0 && self.hires_accum == 0.0 && self.detent_accum == 0.0
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ImmediateAxis {
-    pub(crate) hires_accum: f64,
-    pub(crate) detent_accum: f64,
-}
-
-impl ImmediateAxis {
-    pub const fn new() -> Self {
-        Self {
-            hires_accum: 0.0,
-            detent_accum: 0.0,
-        }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.hires_accum = 0.0;
-        self.detent_accum = 0.0;
-    }
-
-    pub(crate) fn push_detents(&mut self, input_detents: f64, gain: f64) {
-        self.hires_accum += input_detents * 120.0 * gain;
-        self.detent_accum += input_detents * gain;
-    }
-
-    pub(crate) fn drain(&mut self) -> (i32, i32) {
-        let hires = trunc_to_i32(self.hires_accum);
-        self.hires_accum -= hires as f64;
-
-        let detents = trunc_to_i32(self.detent_accum);
-        self.detent_accum -= detents as f64;
-
-        (hires, detents)
-    }
-
-    pub(crate) fn is_idle(&self) -> bool {
-        self.hires_accum == 0.0 && self.detent_accum == 0.0
     }
 }
 
@@ -341,6 +241,449 @@ impl MiddleDragState {
         if self.dx.abs() >= deadzone_px || self.dy.abs() >= deadzone_px {
             self.moved = true;
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScrollKey {
+    LeftMeta,
+    RightMeta,
+    Middle,
+    Left,
+    Right,
+    Side,
+    Extra,
+    Forward,
+    Back,
+    Task,
+    Other(u16),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScrollAxis {
+    X,
+    Y,
+    Wheel,
+    WheelHiRes,
+    HWheel,
+    HWheelHiRes,
+    Other(u16),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InputEvent {
+    Key { key: ScrollKey, value: i32 },
+    Rel { axis: ScrollAxis, value: i32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutputEvent {
+    Key { key: ScrollKey, value: i32 },
+    Rel { axis: ScrollAxis, value: i32 },
+}
+
+#[derive(Debug)]
+pub(crate) struct MomentumAxis {
+    pub(crate) velocity_hires: f64,
+    pub(crate) hires_accum: f64,
+    pub(crate) detent_accum: f64,
+}
+
+impl MomentumAxis {
+    pub const fn new() -> Self {
+        Self {
+            velocity_hires: 0.0,
+            hires_accum: 0.0,
+            detent_accum: 0.0,
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.velocity_hires = 0.0;
+        self.hires_accum = 0.0;
+        self.detent_accum = 0.0;
+    }
+
+    pub(crate) fn push_detents(&mut self, input_detents: f64, gain: f64, max_velocity: f64) {
+        self.velocity_hires += input_detents * 120.0 * gain;
+        self.velocity_hires = self.velocity_hires.clamp(-max_velocity, max_velocity);
+    }
+
+    pub(crate) fn tick(&mut self, damping: f64, dt: Duration) {
+        let dt_ms = dt.as_secs_f64() * 1000.0;
+
+        let base_dt = 1000.0 / 144.0;
+        let scale = (dt_ms / base_dt).clamp(0.25, 4.0);
+
+        self.hires_accum += self.velocity_hires * scale;
+
+        let effective_damping = damping.powf(scale);
+        self.velocity_hires *= effective_damping;
+
+        if self.velocity_hires.abs() < VELOCITY_EPSILON {
+            self.velocity_hires = 0.0;
+        }
+        if self.hires_accum.abs() < ACCUM_EPSILON {
+            self.hires_accum = 0.0;
+        }
+        if self.detent_accum.abs() < ACCUM_EPSILON {
+            self.detent_accum = 0.0;
+        }
+    }
+
+    pub(crate) fn drain(&mut self) -> (i32, i32) {
+        let hires = trunc_to_i32(self.hires_accum);
+        self.hires_accum -= hires as f64;
+
+        self.detent_accum += hires as f64 / 120.0;
+        let detents = trunc_to_i32(self.detent_accum);
+        self.detent_accum -= detents as f64;
+
+        (hires, detents)
+    }
+
+    pub(crate) fn drain_events(&mut self, vertical: bool) -> Vec<OutputEvent> {
+        let (hires, detents) = self.drain();
+        let mut out = Vec::with_capacity(2);
+
+        if hires != 0 {
+            let axis = if vertical {
+                ScrollAxis::WheelHiRes
+            } else {
+                ScrollAxis::HWheelHiRes
+            };
+            out.push(OutputEvent::Rel { axis, value: hires });
+        }
+
+        if detents != 0 {
+            let axis = if vertical {
+                ScrollAxis::Wheel
+            } else {
+                ScrollAxis::HWheel
+            };
+            out.push(OutputEvent::Rel {
+                axis,
+                value: detents,
+            });
+        }
+
+        out
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ImmediateAxis {
+    pub(crate) hires_accum: f64,
+    pub(crate) detent_accum: f64,
+}
+
+impl ImmediateAxis {
+    pub const fn new() -> Self {
+        Self {
+            hires_accum: 0.0,
+            detent_accum: 0.0,
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.hires_accum = 0.0;
+        self.detent_accum = 0.0;
+    }
+
+    pub(crate) fn push_detents(&mut self, input_detents: f64, gain: f64) {
+        self.hires_accum += input_detents * 120.0 * gain;
+        self.detent_accum += input_detents * gain;
+    }
+
+    pub(crate) fn drain(&mut self) -> (i32, i32) {
+        let hires = trunc_to_i32(self.hires_accum);
+        self.hires_accum -= hires as f64;
+
+        let detents = trunc_to_i32(self.detent_accum);
+        self.detent_accum -= detents as f64;
+
+        (hires, detents)
+    }
+
+    pub(crate) fn drain_events(&mut self, vertical: bool) -> Vec<OutputEvent> {
+        let (hires, detents) = self.drain();
+        let mut out = Vec::with_capacity(2);
+
+        if hires != 0 {
+            let axis = if vertical {
+                ScrollAxis::WheelHiRes
+            } else {
+                ScrollAxis::HWheelHiRes
+            };
+            out.push(OutputEvent::Rel { axis, value: hires });
+        }
+
+        if detents != 0 {
+            let axis = if vertical {
+                ScrollAxis::Wheel
+            } else {
+                ScrollAxis::HWheel
+            };
+            out.push(OutputEvent::Rel {
+                axis,
+                value: detents,
+            });
+        }
+
+        out
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ScrollController {
+    normal_wheel_v: MomentumAxis,
+    normal_wheel_h: MomentumAxis,
+    drag_wheel_v: MomentumAxis,
+    drag_wheel_h: MomentumAxis,
+    immediate_drag_v: ImmediateAxis,
+    immediate_drag_h: ImmediateAxis,
+    middle: MiddleDragState,
+    modifiers: ModifierState,
+}
+
+impl ScrollController {
+    pub fn new() -> Self {
+        Self {
+            normal_wheel_v: MomentumAxis::new(),
+            normal_wheel_h: MomentumAxis::new(),
+            drag_wheel_v: MomentumAxis::new(),
+            drag_wheel_h: MomentumAxis::new(),
+            immediate_drag_v: ImmediateAxis::new(),
+            immediate_drag_h: ImmediateAxis::new(),
+            middle: MiddleDragState::new(),
+            modifiers: ModifierState::new(),
+        }
+    }
+
+    pub fn clear_scroll_state(&mut self) {
+        self.normal_wheel_v.clear();
+        self.normal_wheel_h.clear();
+        self.drag_wheel_v.clear();
+        self.drag_wheel_h.clear();
+        self.immediate_drag_v.clear();
+        self.immediate_drag_h.clear();
+        self.middle.clear();
+    }
+
+    pub fn handle_input(&mut self, input: InputEvent, cfg: &ScrollConfig) -> Vec<OutputEvent> {
+        match input {
+            InputEvent::Key { key, value } => self.handle_key(key, value),
+            InputEvent::Rel { axis, value } => self.handle_rel(axis, value, cfg),
+        }
+    }
+
+    fn handle_key(&mut self, key: ScrollKey, value: i32) -> Vec<OutputEvent> {
+        let mut out = Vec::new();
+
+        match key {
+            ScrollKey::LeftMeta | ScrollKey::RightMeta => {
+                let new_state = value != 0;
+
+                if !self.modifiers.win_down && new_state {
+                    self.normal_wheel_v.clear();
+                    self.normal_wheel_h.clear();
+                    self.drag_wheel_v.clear();
+                    self.drag_wheel_h.clear();
+                    self.immediate_drag_v.clear();
+                    self.immediate_drag_h.clear();
+                }
+
+                self.modifiers.win_down = new_state;
+            }
+
+            ScrollKey::Middle => {
+                if value == 1 {
+                    self.middle.begin();
+                } else if value == 0 {
+                    self.middle.clear();
+                }
+
+                out.push(OutputEvent::Key { key, value });
+            }
+
+            ScrollKey::Left
+            | ScrollKey::Right
+            | ScrollKey::Side
+            | ScrollKey::Extra
+            | ScrollKey::Forward
+            | ScrollKey::Back
+            | ScrollKey::Task
+            | ScrollKey::Other(_) => {
+                out.push(OutputEvent::Key { key, value });
+            }
+        }
+
+        out
+    }
+
+    fn handle_rel(&mut self, axis: ScrollAxis, value: i32, cfg: &ScrollConfig) -> Vec<OutputEvent> {
+        let middle_scroll_enabled = cfg.middle_scroll_enabled();
+        let middle_scroll_mode =
+            middle_scroll_enabled && self.middle.is_scroll_mode(cfg.tap_max_duration_ms());
+        let smooth_enabled = cfg.smooth_enabled() && !self.modifiers.win_down;
+
+        let mut out = Vec::new();
+
+        match axis {
+            ScrollAxis::X => {
+                if middle_scroll_enabled && self.middle.pressed_at.is_some() {
+                    self.middle.push_motion(value, 0, cfg.drag_deadzone_px());
+                }
+
+                if middle_scroll_mode {
+                    if smooth_enabled {
+                        self.drag_wheel_h.push_detents(
+                            -(value as f64),
+                            cfg.drag_wheel_gain(),
+                            cfg.max_velocity_hires(),
+                        );
+                    } else {
+                        self.immediate_drag_h
+                            .push_detents(-(value as f64), cfg.drag_wheel_gain());
+                        out.extend(self.immediate_drag_h.drain_events(false));
+                    }
+                } else {
+                    out.push(OutputEvent::Rel { axis, value });
+                }
+            }
+
+            ScrollAxis::Y => {
+                if middle_scroll_enabled && self.middle.pressed_at.is_some() {
+                    self.middle.push_motion(0, value, cfg.drag_deadzone_px());
+                }
+
+                if middle_scroll_mode {
+                    if smooth_enabled {
+                        self.drag_wheel_v.push_detents(
+                            -(value as f64),
+                            cfg.drag_wheel_gain(),
+                            cfg.max_velocity_hires(),
+                        );
+                    } else {
+                        self.immediate_drag_v
+                            .push_detents(-(value as f64), cfg.drag_wheel_gain());
+                        out.extend(self.immediate_drag_v.drain_events(true));
+                    }
+                } else {
+                    out.push(OutputEvent::Rel { axis, value });
+                }
+            }
+
+            ScrollAxis::Wheel => {
+                if smooth_enabled {
+                    if middle_scroll_mode {
+                        self.drag_wheel_v.push_detents(
+                            value as f64,
+                            cfg.drag_wheel_gain(),
+                            cfg.max_velocity_hires(),
+                        );
+                    } else {
+                        self.normal_wheel_v.push_detents(
+                            value as f64,
+                            cfg.normal_wheel_gain(),
+                            cfg.max_velocity_hires(),
+                        );
+                    }
+                } else {
+                    out.push(OutputEvent::Rel { axis, value });
+                }
+            }
+
+            ScrollAxis::WheelHiRes => {
+                if smooth_enabled {
+                    let detents = value as f64 / 120.0;
+                    if middle_scroll_mode {
+                        self.drag_wheel_v.push_detents(
+                            detents,
+                            cfg.drag_wheel_gain(),
+                            cfg.max_velocity_hires(),
+                        );
+                    } else {
+                        self.normal_wheel_v.push_detents(
+                            detents,
+                            cfg.normal_wheel_gain(),
+                            cfg.max_velocity_hires(),
+                        );
+                    }
+                } else {
+                    out.push(OutputEvent::Rel { axis, value });
+                }
+            }
+
+            ScrollAxis::HWheel => {
+                if smooth_enabled {
+                    if middle_scroll_mode {
+                        self.drag_wheel_h.push_detents(
+                            value as f64,
+                            cfg.drag_wheel_gain(),
+                            cfg.max_velocity_hires(),
+                        );
+                    } else {
+                        self.normal_wheel_h.push_detents(
+                            value as f64,
+                            cfg.normal_wheel_gain(),
+                            cfg.max_velocity_hires(),
+                        );
+                    }
+                } else {
+                    out.push(OutputEvent::Rel { axis, value });
+                }
+            }
+
+            ScrollAxis::HWheelHiRes => {
+                if smooth_enabled {
+                    let detents = value as f64 / 120.0;
+                    if middle_scroll_mode {
+                        self.drag_wheel_h.push_detents(
+                            detents,
+                            cfg.drag_wheel_gain(),
+                            cfg.max_velocity_hires(),
+                        );
+                    } else {
+                        self.normal_wheel_h.push_detents(
+                            detents,
+                            cfg.normal_wheel_gain(),
+                            cfg.max_velocity_hires(),
+                        );
+                    }
+                } else {
+                    out.push(OutputEvent::Rel { axis, value });
+                }
+            }
+
+            ScrollAxis::Other(_) => {
+                out.push(OutputEvent::Rel { axis, value });
+            }
+        }
+
+        out
+    }
+
+    pub fn advance(&mut self, cfg: &ScrollConfig, dt: Duration) -> Vec<OutputEvent> {
+        if self.modifiers.win_down || !cfg.smooth_enabled() {
+            self.normal_wheel_v.clear();
+            self.normal_wheel_h.clear();
+            self.drag_wheel_v.clear();
+            self.drag_wheel_h.clear();
+            return Vec::new();
+        }
+
+        self.normal_wheel_v.tick(cfg.normal_wheel_damping(), dt);
+        self.normal_wheel_h.tick(cfg.normal_wheel_damping(), dt);
+        self.drag_wheel_v.tick(cfg.drag_wheel_damping(), dt);
+        self.drag_wheel_h.tick(cfg.drag_wheel_damping(), dt);
+
+        let mut out = Vec::new();
+        out.extend(self.normal_wheel_v.drain_events(true));
+        out.extend(self.normal_wheel_h.drain_events(false));
+        out.extend(self.drag_wheel_v.drain_events(true));
+        out.extend(self.drag_wheel_h.drain_events(false));
+        out
     }
 }
 

@@ -6,6 +6,7 @@
 
 mod app;
 mod engine;
+mod tray;
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -15,14 +16,12 @@ mod wayland;
 
 #[cfg(target_os = "windows")]
 #[path = "tray-windows.rs"]
-mod tray;
+mod tray_windows;
 
 #[cfg(target_os = "linux")]
 #[path = "tray-wayland.rs"]
-mod tray;
+mod tray_wayland;
 
 fn main() {
-    if let Err(e) = app::run() {
-        eprintln!("{e}");
-    }
+    let _ = app::run();
 }

@@ -1,4 +1,4 @@
-use crate::app::UiHandles;
+use crate::tray::UiHandles;
 use ksni::menu::StandardItem;
 use ksni::TrayMethods;
 use std::error::Error;
@@ -67,20 +67,14 @@ pub(crate) fn start(ui: UiHandles) -> Result<(), Box<dyn Error>> {
                 .build()
             {
                 Ok(rt) => rt,
-                Err(err) => {
-                    eprintln!("[ERROR] tray runtime init failed: {err}");
-                    return;
-                }
+                Err(_) => return,
             };
 
             rt.block_on(async move {
                 let tray = NimbusTray { ui };
                 let handle = match tray.assume_sni_available(true).spawn().await {
                     Ok(handle) => handle,
-                    Err(err) => {
-                        eprintln!("[ERROR] tray init failed: {err}");
-                        return;
-                    }
+                    Err(_) => return,
                 };
 
                 let _keep_alive = handle;
