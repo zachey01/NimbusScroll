@@ -6,20 +6,23 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
-use windows::Win32::System::Threading::{GetCurrentThreadId, PostThreadMessageW};
+
+use windows::Win32::System::Threading::GetCurrentThreadId;
+
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_MOUSE, KBDLLHOOKSTRUCT, KEYBDINPUT, LLKHF_INJECTED,
-    LLMHF_INJECTED, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
-    MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT,
-    MSLLHOOKSTRUCT,
+    SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN,
+    MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
+    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEEVENTF_XDOWN,
+    MOUSEEVENTF_XUP, MOUSEINPUT,
 };
+
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, SetWindowsHookExW,
-    SetWindowsHookExW as _, TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK, MSG,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_QUIT,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, PostThreadMessageW,
+    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT,
+    LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN,
+    WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
 pub(crate) struct WindowsBackend;
@@ -28,15 +31,15 @@ const XBUTTON1_DATA: u32 = 1;
 const XBUTTON2_DATA: u32 = 2;
 
 #[derive(Default)]
-struct WindowsMouseHandle;
+pub struct WindowsMouseHandle;
 
 #[derive(Default)]
-struct WindowsKeyboardHandle;
+pub struct WindowsKeyboardHandle;
 
 #[derive(Default)]
-struct WindowsOutputHandle;
+pub struct WindowsOutputHandle;
 
-struct WindowsInputState {
+pub struct WindowsInputState {
     mouse_events: Mutex<VecDeque<InputEvent>>,
     keyboard_events: Mutex<VecDeque<InputEvent>>,
     last_cursor: Mutex<Option<(i32, i32)>>,
@@ -96,7 +99,9 @@ fn state() -> Arc<WindowsInputState> {
 
 pub(crate) fn request_exit() {
     if let Some(id) = HOOK_THREAD_ID.get().copied() {
-        let _ = PostThreadMessageW(id, WM_QUIT, WPARAM(0), LPARAM(0));
+        unsafe {
+            let _ = PostThreadMessageW(id, WM_QUIT, WPARAM(0), LPARAM(0));
+        }
     }
 }
 
@@ -376,7 +381,7 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
     if code == HC_ACTION as i32 {
         let info = *(lparam.0 as *const KBDLLHOOKSTRUCT);
 
-        if (info.flags & LLKHF_INJECTED) != 0 {
+        if (info.flags.0 & LLKHF_INJECTED.0) != 0 {
             return CallNextHookEx(HHOOK(0), code, wparam, lparam);
         }
 
