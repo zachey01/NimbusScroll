@@ -1,0 +1,354 @@
+import { Button, Slider, Switch, ComboBox, GroupBox, VerticalBox, HorizontalBox, TabWidget } from "std-widgets.slint";
+
+export component SettingsWindow inherits Window {
+    title: "NimbusScroll Settings";
+    width: 640px;
+    height: 520px;
+
+    in-out property <[string]> mouse_devices: [];
+    in-out property <string> selected_mouse: "";
+    in-out property <bool> show_mouse_selector: false;
+
+    in-out property <float> normal_gain: 0.08;
+    in-out property <float> normal_damping: 0.975;
+    in-out property <float> drag_gain: 0.035;
+    in-out property <float> drag_damping: 0.985;
+
+    in-out property <float> drag_deadzone_px: 3.0;
+    in-out property <float> tap_max_duration_ms: 220.0;
+    in-out property <float> loop_sleep_ms: 4.0;
+    in-out property <float> max_velocity_hires: 18.0;
+    in-out property <bool> smooth_enabled: true;
+    in-out property <bool> middle_scroll_enabled: true;
+
+    callback mouse_device_selected(string);
+    callback normal_gain_changed(float);
+    callback normal_damping_changed(float);
+    callback drag_gain_changed(float);
+    callback drag_damping_changed(float);
+    callback drag_deadzone_px_changed(float);
+    callback tap_max_duration_ms_changed(float);
+    callback loop_sleep_ms_changed(float);
+    callback max_velocity_hires_changed(float);
+    callback smooth_enabled_changed(bool);
+    callback middle_scroll_enabled_changed(bool);
+
+    callback reset_defaults();
+    callback open_about();
+    callback request_close();
+
+    VerticalBox {
+        spacing: 4px;
+        padding: 4px;
+
+        Text {
+            text: "NimbusScroll settings";
+            font-size: 18px;
+            horizontal-alignment: center;
+        }
+
+        TabWidget {
+            current-index: 0;
+
+            Tab {
+                title: "General";
+
+                VerticalBox {
+                    spacing: 4px;
+                    padding: 0px;
+
+                    GroupBox {
+                        title: "Mouse";
+                        visible: root.show_mouse_selector;
+
+                        VerticalBox {
+                            spacing: 2px;
+                            padding: 0px;
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Input device"; }
+                                ComboBox {
+                                    model: root.mouse_devices;
+                                    current-value: root.selected_mouse;
+                                    selected(value) => {
+                                        root.selected_mouse = value;
+                                        root.mouse_device_selected(value);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: "Scroll behavior";
+
+                        VerticalBox {
+                            spacing: 2px;
+                            padding: 0px;
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Enable smooth scrolling"; }
+                                Switch {
+                                    checked: root.smooth_enabled;
+                                    toggled() => {
+                                        root.smooth_enabled = self.checked;
+                                        root.smooth_enabled_changed(self.checked);
+                                    }
+                                }
+                            }
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Normal gain"; }
+                                Slider {
+                                    minimum: 0.0;
+                                    maximum: 0.30;
+                                    step: 0.001;
+                                    value: root.normal_gain;
+                                    changed(v) => {
+                                        root.normal_gain = v;
+                                        root.normal_gain_changed(v);
+                                    }
+                                }
+                                Text { width: 72px; horizontal-alignment: right; text: "" + root.normal_gain; }
+                            }
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Normal damping"; }
+                                Slider {
+                                    minimum: 0.0;
+                                    maximum: 1.0;
+                                    step: 0.001;
+                                    value: root.normal_damping;
+                                    changed(v) => {
+                                        root.normal_damping = v;
+                                        root.normal_damping_changed(v);
+                                    }
+                                }
+                                Text { width: 72px; horizontal-alignment: right; text: "" + root.normal_damping; }
+                            }
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Drag gain"; }
+                                Slider {
+                                    minimum: 0.0;
+                                    maximum: 0.30;
+                                    step: 0.001;
+                                    value: root.drag_gain;
+                                    changed(v) => {
+                                        root.drag_gain = v;
+                                        root.drag_gain_changed(v);
+                                    }
+                                }
+                                Text { width: 72px; horizontal-alignment: right; text: "" + root.drag_gain; }
+                            }
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Drag damping"; }
+                                Slider {
+                                    minimum: 0.0;
+                                    maximum: 1.0;
+                                    step: 0.001;
+                                    value: root.drag_damping;
+                                    changed(v) => {
+                                        root.drag_damping = v;
+                                        root.drag_damping_changed(v);
+                                    }
+                                }
+                                Text { width: 72px; horizontal-alignment: right; text: "" + root.drag_damping; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Middle drag";
+
+                VerticalBox {
+                    spacing: 4px;
+                    padding: 0px;
+
+                    GroupBox {
+                        title: "Middle drag";
+
+                        VerticalBox {
+                            spacing: 2px;
+                            padding: 0px;
+
+                            HorizontalBox {
+                                Text { width: 140px; text: "Enable middle scroll"; }
+                                Switch {
+                                    checked: root.middle_scroll_enabled;
+                                    toggled() => {
+                                        root.middle_scroll_enabled = self.checked;
+                                        root.middle_scroll_enabled_changed(self.checked);
+                                    }
+                                }
+                            }
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Deadzone (px)"; }
+                                Slider {
+                                    minimum: 0.0;
+                                    maximum: 20.0;
+                                    step: 0.1;
+                                    value: root.drag_deadzone_px;
+                                    changed(v) => {
+                                        root.drag_deadzone_px = v;
+                                        root.drag_deadzone_px_changed(v);
+                                    }
+                                }
+                                Text { width: 72px; horizontal-alignment: right; text: "" + root.drag_deadzone_px; }
+                            }
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Tap (ms)"; }
+                                Slider {
+                                    minimum: 20.0;
+                                    maximum: 500.0;
+                                    step: 1.0;
+                                    value: root.tap_max_duration_ms;
+                                    changed(v) => {
+                                        root.tap_max_duration_ms = v;
+                                        root.tap_max_duration_ms_changed(v);
+                                    }
+                                }
+                                Text { width: 72px; horizontal-alignment: right; text: "" + root.tap_max_duration_ms; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Engine";
+
+                VerticalBox {
+                    spacing: 4px;
+                    padding: 0px;
+
+                    GroupBox {
+                        title: "Engine";
+
+                        VerticalBox {
+                            spacing: 2px;
+                            padding: 0px;
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Loop (ms)"; }
+                                Slider {
+                                    minimum: 1.0;
+                                    maximum: 30.0;
+                                    step: 1.0;
+                                    value: root.loop_sleep_ms;
+                                    changed(v) => {
+                                        root.loop_sleep_ms = v;
+                                        root.loop_sleep_ms_changed(v);
+                                    }
+                                }
+                                Text { width: 72px; horizontal-alignment: right; text: "" + root.loop_sleep_ms; }
+                            }
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Max velocity"; }
+                                Slider {
+                                    minimum: 1.0;
+                                    maximum: 40.0;
+                                    step: 0.1;
+                                    value: root.max_velocity_hires;
+                                    changed(v) => {
+                                        root.max_velocity_hires = v;
+                                        root.max_velocity_hires_changed(v);
+                                    }
+                                }
+                                Text { width: 72px; horizontal-alignment: right; text: "" + root.max_velocity_hires; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalBox {
+            spacing: 4px;
+
+            Button {
+                text: "Reset";
+                clicked => { root.reset_defaults(); }
+            }
+
+            Button {
+                text: "About";
+                clicked => { root.open_about(); }
+            }
+
+            Button {
+                text: "Close";
+                clicked => { root.request_close(); }
+            }
+        }
+    }
+}
+
+export component AboutWindow inherits Window {
+    title: "About NimbusScroll";
+    width: 420px;
+    height: 220px;
+
+    in-out property <string> version: "v1.0.0";
+
+    callback request_close();
+    callback open_github();
+    callback open_telegram();
+
+    VerticalBox {
+        spacing: 6px;
+        padding: 8px;
+
+        Text {
+            text: "NimbusScroll";
+            font-size: 22px;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "Version: " + root.version;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "Tray-based smooth scrolling.";
+            horizontal-alignment: center;
+        }
+
+        HorizontalBox {
+            spacing: 8px;
+            horizontal-stretch: 1;
+
+            Button {
+                text: "GitHub";
+                clicked => { root.open_github(); }
+            }
+
+            Button {
+                text: "Telegram";
+                clicked => { root.open_telegram(); }
+            }
+
+            Button {
+                text: "Close";
+                clicked => { root.request_close(); }
+            }
+        }
+    }
+}
