@@ -841,3 +841,20 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+pub(crate) fn tray_run_loop() -> Result<(), Box<dyn Error>> {
+    run()
+}
+
+pub(crate) fn tray_show_settings() {
+    let state = STATE.lock().unwrap();
+    if let Some(ui) = &state.ui {
+        ui.show_settings();
+    }
+}
+
+pub(crate) fn tray_show_about() {
+    let state = STATE.lock().unwrap();
+    if let Some(ui) = &state.ui {
+        ui.show_about();
+    }
+}
