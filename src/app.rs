@@ -1,15 +1,13 @@
 use crate::engine::{
-    self, InputEvent, MouseDeviceInfo, OutputEvent, ScrollConfig, ScrollController,
+    self, EasingKind, InputEvent, MouseDeviceInfo, OutputEvent, ScrollConfig, ScrollController,
 };
 use crate::tray::{AboutWindow, SettingsWindow, UiHandles};
 use slint::ComponentHandle;
+use slint::{ModelRc, SharedString, VecModel};
 use std::error::Error;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-#[cfg(target_os = "linux")]
-use slint::{ModelRc, SharedString, VecModel};
 
 pub(crate) trait Backend {
     type Mouse;
@@ -95,6 +93,16 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         settings.set_selected_mouse(selected_label.clone().into());
     }
 
+    {
+        let easing_labels: Vec<SharedString> = EasingKind::ALL
+            .iter()
+            .map(|kind| SharedString::from(kind.label()))
+            .collect();
+        let easing_model = Rc::new(VecModel::from(easing_labels));
+        settings.set_easing_functions(ModelRc::from(easing_model));
+        settings.set_selected_easing(config.easing_kind().label().into());
+    }
+
     if let Some(path) = selected_path.clone() {
         config.set_mouse_device_path(Some(path));
     }
@@ -139,6 +147,14 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         let cfg = config.clone();
         settings.on_middle_scroll_enabled_changed(move |v| cfg.set_middle_scroll_enabled(v));
     }
+    {
+        let cfg = config.clone();
+        settings.on_easing_selected(move |value| {
+            if let Some(kind) = EasingKind::from_label(value.as_str()) {
+                cfg.set_easing_kind(kind);
+            }
+        });
+    }
 
     {
         let cfg_mouse = config.clone();
@@ -172,6 +188,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 crate::tray::sync_settings(&win, &cfg);
                 #[cfg(target_os = "linux")]
                 win.set_selected_mouse(default_mouse_label.into());
+                win.set_selected_easing(cfg.easing_kind().label().into());
             });
         });
     }

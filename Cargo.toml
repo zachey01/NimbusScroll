@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.50.0", features = ["rt"] }
 slint = "1.15.1"
+num-traits = "0.2.19"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winres = "0.1.12"

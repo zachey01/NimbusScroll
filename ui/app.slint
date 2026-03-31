@@ -9,6 +9,9 @@ export component SettingsWindow inherits Window {
     in-out property <string> selected_mouse: "";
     in-out property <bool> show_mouse_selector: false;
 
+    in-out property <[string]> easing_functions: [];
+    in-out property <string> selected_easing: "linear";
+
     in-out property <float> normal_gain: 0.08;
     in-out property <float> normal_damping: 0.975;
     in-out property <float> drag_gain: 0.035;
@@ -22,6 +25,7 @@ export component SettingsWindow inherits Window {
     in-out property <bool> middle_scroll_enabled: true;
 
     callback mouse_device_selected(string);
+    callback easing_selected(string);
     callback normal_gain_changed(float);
     callback normal_damping_changed(float);
     callback drag_gain_changed(float);
@@ -241,6 +245,19 @@ export component SettingsWindow inherits Window {
                         VerticalBox {
                             spacing: 2px;
                             padding: 0px;
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Text { width: 140px; text: "Easing"; }
+                                ComboBox {
+                                    model: root.easing_functions;
+                                    current-value: root.selected_easing;
+                                    selected(value) => {
+                                        root.selected_easing = value;
+                                        root.easing_selected(value);
+                                    }
+                                }
+                            }
 
                             HorizontalBox {
                                 spacing: 4px;

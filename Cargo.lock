@@ -3286,6 +3286,7 @@ version = "1.0.0"
 dependencies = [
  "evdev",
  "ksni",
+ "num-traits",
  "slint",
  "slint-build",
  "tokio",
