@@ -1,4 +1,8 @@
 use crate::easing;
+use std::env;
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -16,6 +20,9 @@ pub(crate) const DEFAULT_MAX_VELOCITY_HIRES: f64 = 18.0;
 
 pub(crate) const VELOCITY_EPSILON: f64 = 0.0001;
 pub(crate) const ACCUM_EPSILON: f64 = 0.0001;
+
+const CONFIG_DIR_NAME: &str = "NimbusScroll";
+const CONFIG_FILE_NAME: &str = "config.txt";
 
 static CONFIG: OnceLock<Arc<ScrollConfig>> = OnceLock::new();
 static EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -241,6 +248,41 @@ impl EasingKind {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ConfigSnapshot {
+    normal_wheel_gain: f64,
+    normal_wheel_damping: f64,
+    drag_wheel_gain: f64,
+    drag_wheel_damping: f64,
+    drag_deadzone_px: f64,
+    tap_max_duration_ms: u64,
+    loop_sleep_ms: u64,
+    max_velocity_hires: f64,
+    easing_kind: EasingKind,
+    smooth_enabled: bool,
+    middle_scroll_enabled: bool,
+    mouse_device_path: Option<String>,
+}
+
+impl ConfigSnapshot {
+    fn defaults() -> Self {
+        Self {
+            normal_wheel_gain: DEFAULT_NORMAL_WHEEL_GAIN,
+            normal_wheel_damping: DEFAULT_NORMAL_WHEEL_DAMPING,
+            drag_wheel_gain: DEFAULT_DRAG_WHEEL_GAIN,
+            drag_wheel_damping: DEFAULT_DRAG_WHEEL_DAMPING,
+            drag_deadzone_px: DEFAULT_DRAG_DEADZONE_PX,
+            tap_max_duration_ms: DEFAULT_TAP_MAX_DURATION_MS,
+            loop_sleep_ms: DEFAULT_LOOP_SLEEP_MS,
+            max_velocity_hires: DEFAULT_MAX_VELOCITY_HIRES,
+            easing_kind: EasingKind::Linear,
+            smooth_enabled: true,
+            middle_scroll_enabled: true,
+            mouse_device_path: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ScrollConfig {
     normal_wheel_gain: AtomicU64,
@@ -259,7 +301,7 @@ pub(crate) struct ScrollConfig {
 
 impl ScrollConfig {
     pub fn new() -> Self {
-        Self {
+        let this = Self {
             normal_wheel_gain: AtomicU64::new(DEFAULT_NORMAL_WHEEL_GAIN.to_bits()),
             normal_wheel_damping: AtomicU64::new(DEFAULT_NORMAL_WHEEL_DAMPING.to_bits()),
             drag_wheel_gain: AtomicU64::new(DEFAULT_DRAG_WHEEL_GAIN.to_bits()),
@@ -272,21 +314,27 @@ impl ScrollConfig {
             smooth_enabled: AtomicBool::new(true),
             middle_scroll_enabled: AtomicBool::new(true),
             mouse_device_path: Mutex::new(None),
-        }
+        };
+
+        let _ = this.load_from_disk();
+        let _ = this.save_to_disk();
+        this
     }
 
     pub fn reset_defaults(&self) {
-        self.set_normal_wheel_gain(DEFAULT_NORMAL_WHEEL_GAIN);
-        self.set_normal_wheel_damping(DEFAULT_NORMAL_WHEEL_DAMPING);
-        self.set_drag_wheel_gain(DEFAULT_DRAG_WHEEL_GAIN);
-        self.set_drag_wheel_damping(DEFAULT_DRAG_WHEEL_DAMPING);
-        self.set_drag_deadzone_px(DEFAULT_DRAG_DEADZONE_PX);
-        self.set_tap_max_duration_ms(DEFAULT_TAP_MAX_DURATION_MS as f64);
-        self.set_loop_sleep_ms(DEFAULT_LOOP_SLEEP_MS as f64);
-        self.set_max_velocity_hires(DEFAULT_MAX_VELOCITY_HIRES);
-        self.set_easing_kind(EasingKind::Linear);
-        self.set_smooth_enabled(true);
-        self.set_middle_scroll_enabled(true);
+        self.set_normal_wheel_gain_raw(DEFAULT_NORMAL_WHEEL_GAIN);
+        self.set_normal_wheel_damping_raw(DEFAULT_NORMAL_WHEEL_DAMPING);
+        self.set_drag_wheel_gain_raw(DEFAULT_DRAG_WHEEL_GAIN);
+        self.set_drag_wheel_damping_raw(DEFAULT_DRAG_WHEEL_DAMPING);
+        self.set_drag_deadzone_px_raw(DEFAULT_DRAG_DEADZONE_PX);
+        self.set_tap_max_duration_ms_raw(DEFAULT_TAP_MAX_DURATION_MS as f64);
+        self.set_loop_sleep_ms_raw(DEFAULT_LOOP_SLEEP_MS as f64);
+        self.set_max_velocity_hires_raw(DEFAULT_MAX_VELOCITY_HIRES);
+        self.set_easing_kind_raw(EasingKind::Linear);
+        self.set_smooth_enabled_raw(true);
+        self.set_middle_scroll_enabled_raw(true);
+        self.set_mouse_device_path_raw(None);
+        let _ = self.save_to_disk();
     }
 
     fn load_f64(atom: &AtomicU64) -> f64 {
@@ -297,82 +345,437 @@ impl ScrollConfig {
         atom.store(value.to_bits(), Ordering::Relaxed);
     }
 
+    fn snapshot(&self) -> ConfigSnapshot {
+        ConfigSnapshot {
+            normal_wheel_gain: self.normal_wheel_gain(),
+            normal_wheel_damping: self.normal_wheel_damping(),
+            drag_wheel_gain: self.drag_wheel_gain(),
+            drag_wheel_damping: self.drag_wheel_damping(),
+            drag_deadzone_px: self.drag_deadzone_px(),
+            tap_max_duration_ms: self.tap_max_duration_ms(),
+            loop_sleep_ms: self.loop_sleep_ms(),
+            max_velocity_hires: self.max_velocity_hires(),
+            easing_kind: self.easing_kind(),
+            smooth_enabled: self.smooth_enabled(),
+            middle_scroll_enabled: self.middle_scroll_enabled(),
+            mouse_device_path: self.mouse_device_path(),
+        }
+    }
+
+    fn apply_snapshot(&self, snap: ConfigSnapshot) {
+        self.set_normal_wheel_gain_raw(snap.normal_wheel_gain);
+        self.set_normal_wheel_damping_raw(snap.normal_wheel_damping);
+        self.set_drag_wheel_gain_raw(snap.drag_wheel_gain);
+        self.set_drag_wheel_damping_raw(snap.drag_wheel_damping);
+        self.set_drag_deadzone_px_raw(snap.drag_deadzone_px);
+        self.set_tap_max_duration_ms_raw(snap.tap_max_duration_ms as f64);
+        self.set_loop_sleep_ms_raw(snap.loop_sleep_ms as f64);
+        self.set_max_velocity_hires_raw(snap.max_velocity_hires);
+        self.set_easing_kind_raw(snap.easing_kind);
+        self.set_smooth_enabled_raw(snap.smooth_enabled);
+        self.set_middle_scroll_enabled_raw(snap.middle_scroll_enabled);
+        self.set_mouse_device_path_raw(snap.mouse_device_path);
+    }
+
+    fn config_path() -> Option<PathBuf> {
+        #[cfg(target_os = "windows")]
+        {
+            let home = env::var_os("USERPROFILE").map(PathBuf::from)?;
+            return Some(
+                home.join("Documents")
+                    .join(CONFIG_DIR_NAME)
+                    .join(CONFIG_FILE_NAME),
+            );
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let home = env::var_os("HOME").map(PathBuf::from)?;
+            return Some(
+                home.join(".config")
+                    .join(CONFIG_DIR_NAME)
+                    .join(CONFIG_FILE_NAME),
+            );
+        }
+    }
+
+    fn format_f64(value: f64) -> String {
+        format!("{:.17}", value)
+    }
+
+    fn escape_string(value: &str) -> String {
+        let mut out = String::with_capacity(value.len() + 8);
+        for ch in value.chars() {
+            match ch {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    fn unescape_string(value: &str) -> Option<String> {
+        let mut out = String::with_capacity(value.len());
+        let mut chars = value.chars();
+        while let Some(ch) = chars.next() {
+            if ch != '\\' {
+                out.push(ch);
+                continue;
+            }
+
+            let next = chars.next()?;
+            match next {
+                '\\' => out.push('\\'),
+                '"' => out.push('"'),
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                other => out.push(other),
+            }
+        }
+        Some(out)
+    }
+
+    fn parse_bool(value: &str) -> Option<bool> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        }
+    }
+
+    fn parse_f64(value: &str) -> Option<f64> {
+        value.trim().parse::<f64>().ok()
+    }
+
+    fn parse_u64(value: &str) -> Option<u64> {
+        value.trim().parse::<u64>().ok()
+    }
+
+    fn parse_optional_string(value: &str) -> Option<Option<String>> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Some(None);
+        }
+
+        if trimmed == "\"\"" {
+            return Some(None);
+        }
+
+        if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            return Self::unescape_string(inner).map(|s| if s.is_empty() { None } else { Some(s) });
+        }
+
+        Some(Some(trimmed.to_string()))
+    }
+
+    fn parse_snapshot(text: &str) -> ConfigSnapshot {
+        let mut snap = ConfigSnapshot::defaults();
+
+        for raw_line in text.lines() {
+            let line = raw_line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+
+            let key = key.trim();
+            let value = value.trim();
+
+            match key {
+                "normal_wheel_gain" => {
+                    if let Some(v) = Self::parse_f64(value) {
+                        snap.normal_wheel_gain = v;
+                    }
+                }
+                "normal_wheel_damping" => {
+                    if let Some(v) = Self::parse_f64(value) {
+                        snap.normal_wheel_damping = v;
+                    }
+                }
+                "drag_wheel_gain" => {
+                    if let Some(v) = Self::parse_f64(value) {
+                        snap.drag_wheel_gain = v;
+                    }
+                }
+                "drag_wheel_damping" => {
+                    if let Some(v) = Self::parse_f64(value) {
+                        snap.drag_wheel_damping = v;
+                    }
+                }
+                "drag_deadzone_px" => {
+                    if let Some(v) = Self::parse_f64(value) {
+                        snap.drag_deadzone_px = v;
+                    }
+                }
+                "tap_max_duration_ms" => {
+                    if let Some(v) = Self::parse_u64(value) {
+                        snap.tap_max_duration_ms = v;
+                    } else if let Some(v) = Self::parse_f64(value) {
+                        snap.tap_max_duration_ms = v.max(1.0) as u64;
+                    }
+                }
+                "loop_sleep_ms" => {
+                    if let Some(v) = Self::parse_u64(value) {
+                        snap.loop_sleep_ms = v;
+                    } else if let Some(v) = Self::parse_f64(value) {
+                        snap.loop_sleep_ms = v.max(1.0) as u64;
+                    }
+                }
+                "max_velocity_hires" => {
+                    if let Some(v) = Self::parse_f64(value) {
+                        snap.max_velocity_hires = v;
+                    }
+                }
+                "easing_kind" => {
+                    if let Some(kind) = EasingKind::from_label(value.trim_matches('"')) {
+                        snap.easing_kind = kind;
+                    } else if let Ok(raw) = value.trim().parse::<u64>() {
+                        snap.easing_kind = EasingKind::from_u64(raw);
+                    }
+                }
+                "smooth_enabled" => {
+                    if let Some(v) = Self::parse_bool(value) {
+                        snap.smooth_enabled = v;
+                    }
+                }
+                "middle_scroll_enabled" => {
+                    if let Some(v) = Self::parse_bool(value) {
+                        snap.middle_scroll_enabled = v;
+                    }
+                }
+                "mouse_device_path" => {
+                    if let Some(v) = Self::parse_optional_string(value) {
+                        snap.mouse_device_path = v;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        snap
+    }
+
+    fn load_from_disk(&self) -> io::Result<()> {
+        let Some(path) = Self::config_path() else {
+            return Ok(());
+        };
+
+        match fs::read_to_string(&path) {
+            Ok(text) => {
+                let snap = Self::parse_snapshot(&text);
+                self.apply_snapshot(snap);
+                Ok(())
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn save_to_disk(&self) -> io::Result<()> {
+        let Some(path) = Self::config_path() else {
+            return Ok(());
+        };
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let snap = self.snapshot();
+
+        let mut text = String::new();
+        text.push_str("# NimbusScroll configuration\n");
+        text.push_str("# This file is rewritten automatically by the application.\n");
+        text.push_str("# Values are loaded on startup.\n\n");
+
+        text.push_str(&format!(
+            "normal_wheel_gain={}\n",
+            Self::format_f64(snap.normal_wheel_gain)
+        ));
+        text.push_str(&format!(
+            "normal_wheel_damping={}\n",
+            Self::format_f64(snap.normal_wheel_damping)
+        ));
+        text.push_str(&format!(
+            "drag_wheel_gain={}\n",
+            Self::format_f64(snap.drag_wheel_gain)
+        ));
+        text.push_str(&format!(
+            "drag_wheel_damping={}\n",
+            Self::format_f64(snap.drag_wheel_damping)
+        ));
+        text.push_str(&format!(
+            "drag_deadzone_px={}\n",
+            Self::format_f64(snap.drag_deadzone_px)
+        ));
+        text.push_str(&format!(
+            "tap_max_duration_ms={}\n",
+            snap.tap_max_duration_ms
+        ));
+        text.push_str(&format!("loop_sleep_ms={}\n", snap.loop_sleep_ms));
+        text.push_str(&format!(
+            "max_velocity_hires={}\n",
+            Self::format_f64(snap.max_velocity_hires)
+        ));
+        text.push_str(&format!("easing_kind={}\n", snap.easing_kind.label()));
+        text.push_str(&format!("smooth_enabled={}\n", snap.smooth_enabled));
+        text.push_str(&format!(
+            "middle_scroll_enabled={}\n",
+            snap.middle_scroll_enabled
+        ));
+        text.push_str(&format!(
+            "mouse_device_path=\"{}\"\n",
+            Self::escape_string(snap.mouse_device_path.as_deref().unwrap_or(""))
+        ));
+
+        fs::write(path, text)
+    }
+
+    fn set_normal_wheel_gain_raw(&self, value: f64) {
+        Self::store_f64(&self.normal_wheel_gain, value.clamp(0.0, 1.0));
+    }
+
+    fn set_normal_wheel_damping_raw(&self, value: f64) {
+        Self::store_f64(&self.normal_wheel_damping, value.clamp(0.0, 1.0));
+    }
+
+    fn set_drag_wheel_gain_raw(&self, value: f64) {
+        Self::store_f64(&self.drag_wheel_gain, value.clamp(0.0, 1.0));
+    }
+
+    fn set_drag_wheel_damping_raw(&self, value: f64) {
+        Self::store_f64(&self.drag_wheel_damping, value.clamp(0.0, 1.0));
+    }
+
+    fn set_drag_deadzone_px_raw(&self, value: f64) {
+        Self::store_f64(&self.drag_deadzone_px, value.max(0.0));
+    }
+
+    fn set_tap_max_duration_ms_raw(&self, value: f64) {
+        Self::store_f64(&self.tap_max_duration_ms, value.max(1.0));
+    }
+
+    fn set_loop_sleep_ms_raw(&self, value: f64) {
+        Self::store_f64(&self.loop_sleep_ms, value.max(1.0));
+    }
+
+    fn set_max_velocity_hires_raw(&self, value: f64) {
+        Self::store_f64(&self.max_velocity_hires, value.max(0.0));
+    }
+
+    fn set_easing_kind_raw(&self, value: EasingKind) {
+        self.easing_kind_bits
+            .store(value.to_u64(), Ordering::Relaxed);
+    }
+
+    fn set_smooth_enabled_raw(&self, value: bool) {
+        self.smooth_enabled.store(value, Ordering::Relaxed);
+    }
+
+    fn set_middle_scroll_enabled_raw(&self, value: bool) {
+        self.middle_scroll_enabled.store(value, Ordering::Relaxed);
+    }
+
+    fn set_mouse_device_path_raw(&self, value: Option<String>) {
+        if let Ok(mut guard) = self.mouse_device_path.lock() {
+            *guard = value;
+        }
+    }
+
     pub fn normal_wheel_gain(&self) -> f64 {
         Self::load_f64(&self.normal_wheel_gain)
     }
     pub fn set_normal_wheel_gain(&self, value: f64) {
-        Self::store_f64(&self.normal_wheel_gain, value.clamp(0.0, 1.0));
+        self.set_normal_wheel_gain_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn normal_wheel_damping(&self) -> f64 {
         Self::load_f64(&self.normal_wheel_damping)
     }
     pub fn set_normal_wheel_damping(&self, value: f64) {
-        Self::store_f64(&self.normal_wheel_damping, value.clamp(0.0, 1.0));
+        self.set_normal_wheel_damping_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn drag_wheel_gain(&self) -> f64 {
         Self::load_f64(&self.drag_wheel_gain)
     }
     pub fn set_drag_wheel_gain(&self, value: f64) {
-        Self::store_f64(&self.drag_wheel_gain, value.clamp(0.0, 1.0));
+        self.set_drag_wheel_gain_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn drag_wheel_damping(&self) -> f64 {
         Self::load_f64(&self.drag_wheel_damping)
     }
     pub fn set_drag_wheel_damping(&self, value: f64) {
-        Self::store_f64(&self.drag_wheel_damping, value.clamp(0.0, 1.0));
+        self.set_drag_wheel_damping_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn drag_deadzone_px(&self) -> f64 {
         Self::load_f64(&self.drag_deadzone_px)
     }
     pub fn set_drag_deadzone_px(&self, value: f64) {
-        Self::store_f64(&self.drag_deadzone_px, value.max(0.0));
+        self.set_drag_deadzone_px_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn tap_max_duration_ms(&self) -> u64 {
         Self::load_f64(&self.tap_max_duration_ms).round().max(1.0) as u64
     }
     pub fn set_tap_max_duration_ms(&self, value: f64) {
-        Self::store_f64(&self.tap_max_duration_ms, value.max(1.0));
+        self.set_tap_max_duration_ms_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn loop_sleep_ms(&self) -> u64 {
         Self::load_f64(&self.loop_sleep_ms).round().max(1.0) as u64
     }
     pub fn set_loop_sleep_ms(&self, value: f64) {
-        Self::store_f64(&self.loop_sleep_ms, value.max(1.0));
+        self.set_loop_sleep_ms_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn max_velocity_hires(&self) -> f64 {
         Self::load_f64(&self.max_velocity_hires).max(0.0)
     }
     pub fn set_max_velocity_hires(&self, value: f64) {
-        Self::store_f64(&self.max_velocity_hires, value.max(0.0));
+        self.set_max_velocity_hires_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn easing_kind(&self) -> EasingKind {
         EasingKind::from_u64(self.easing_kind_bits.load(Ordering::Relaxed))
     }
     pub fn set_easing_kind(&self, value: EasingKind) {
-        self.easing_kind_bits
-            .store(value.to_u64(), Ordering::Relaxed);
+        self.set_easing_kind_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn smooth_enabled(&self) -> bool {
         self.smooth_enabled.load(Ordering::Relaxed)
     }
     pub fn set_smooth_enabled(&self, value: bool) {
-        self.smooth_enabled.store(value, Ordering::Relaxed);
+        self.set_smooth_enabled_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn middle_scroll_enabled(&self) -> bool {
         self.middle_scroll_enabled.load(Ordering::Relaxed)
     }
     pub fn set_middle_scroll_enabled(&self, value: bool) {
-        self.middle_scroll_enabled.store(value, Ordering::Relaxed);
+        self.set_middle_scroll_enabled_raw(value);
+        let _ = self.save_to_disk();
     }
 
     pub fn mouse_device_path(&self) -> Option<String> {
@@ -383,9 +786,8 @@ impl ScrollConfig {
     }
 
     pub fn set_mouse_device_path(&self, value: Option<String>) {
-        if let Ok(mut guard) = self.mouse_device_path.lock() {
-            *guard = value;
-        }
+        self.set_mouse_device_path_raw(value);
+        let _ = self.save_to_disk();
     }
 }
 
